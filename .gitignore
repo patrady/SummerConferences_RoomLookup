@@ -259,3 +259,7 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+/SC_RoomLookup/LH Hall PIK_Room Numbers.xlsx
+/SC_RoomLookup/KC Hall PIK_Room Numbers.xlsx
+/SC_RoomLookup/AR Hall PIK_Room Numbers.xlsx
+/SC_RoomLookup/VH Hall PIK_Room Numbers.xlsx
