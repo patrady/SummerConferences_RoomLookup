@@ -149,9 +149,6 @@ namespace SC_RoomLookup
 
 
         // Public Commands
-        private RelayCommand _uploadFile;
-        public ICommand UploadFileCommand { get => _uploadFile ?? (_uploadFile = new RelayCommand(param => this.UploadFile())); }
-
         private RelayCommand<Hall> _changeHall;
         public ICommand ChangeHallCommand { get => _changeHall ?? (_changeHall = new RelayCommand<Hall>(i => this.ChangeHall(i))); }
 
