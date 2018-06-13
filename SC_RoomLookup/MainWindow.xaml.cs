@@ -16,7 +16,6 @@ namespace SC_RoomLookup
 {
     public partial class MainWindow : Window
     {
-
         public MainWindow()
         {
             InitializeComponent();

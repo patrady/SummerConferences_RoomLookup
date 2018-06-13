@@ -1,10 +1,10 @@
-﻿using Microsoft.Win32;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
-using System.Text;
+using System.Net;
 using System.Windows;
 using System.Windows.Input;
 
@@ -13,14 +13,25 @@ namespace SC_RoomLookup
     public class ViewModel : INotifyPropertyChanged
     {
         public Model Model { get; set; }
+        public DriveAPI GoogleSheets { get; set; }
+        private string FileName { get; set; }
 
         public ViewModel()
         {
             Model = new Model();
+            this.GoogleSheets = new DriveAPI();
             this.IndexedData = Model.Read();
             this.Results = new ObservableCollection<Room>();
             this.ChangeHall(Hall.A_Hall);
+            this.FileName = "log_" + DateTime.Now.ToString("MM-dd-yyyy hh_mm_ss") + ".txt";
 
+            try {
+                this.GoogleSheets.SetSpreadSheet("1qM2QNKumoae0UbksARlBVjSmVHdbTEWG5VU1C5oB00o");
+            } catch (Exception e)
+            {
+                MessageBox.Show("Please ensure that you are connected to the internet\nRestart the app after you are connected!" , "Google Sheets Error");
+                Application.Current.Shutdown();
+            }
         }
 
         // Public Attributes
@@ -60,6 +71,19 @@ namespace SC_RoomLookup
                 }
             }
         }
+        public Check_Options Check_Setting
+        {
+            get { return checkOptions; }
+            set
+            {
+                if (value != checkOptions)
+                {
+                    checkOptions = value;
+                    OnPropertyChanged("Check_Setting");
+                    IsUpdatingGoogleSheets();
+                }
+            }
+        }
         public ObservableCollection<Room> Results { get; set; }
         public string Search_Input
         {
@@ -75,6 +99,54 @@ namespace SC_RoomLookup
         }
         public Dictionary<string,List<Room>> IndexedData { get; set; }
         public List<Room> HallData { get; set; }
+        public string SpreadSheetURL
+        {
+            get { return spreadsheetURL; }
+            set
+            {
+                if (value != spreadsheetURL)
+                {
+                    //https://docs.google.com/spreadsheets/d/{SpreadSheetID}/edit#gid={SheetID}
+                    // Check if the URL is valid
+                    if (this.ValidateURL(value))
+                    {
+                        spreadsheetURL = value;
+
+                        // Update the connection to the Google Spreadsheet
+                        this.GoogleSheets.SetSpreadSheet(spreadsheetURL.Split('/')[5]);
+                        this.GoogleSheets.SetSheet(spreadsheetURL.Split('/').Last().Replace("edit#gid=", ""));
+                        this.GoogleSheets.ReadSheet();
+
+                        // Display to the user if they are connected to the Google Sheet and it will be updated
+                        this.IsUpdatingGoogleSheets();
+                    } 
+                    else 
+                    {
+                        MessageBox.Show("The URL is not valid! Make sure that it follows the format: \n" +
+                            "https://docs.google.com/spreadsheets/d/{SpreadSheetID}/edit#gid={SheetID} \n" +
+                            "where {SpreadSheetID} is combination of letters\n" +
+                            "and {SheetID} is a number");
+                    }
+                }
+                else
+                    value = null;
+
+                OnPropertyChanged("SpreadSheetURL");
+            }
+        }
+        public bool WillUpdateGoogleSheets
+        {
+            get { return willUpdateGoogleSheets; }
+            set
+            {
+                if (value != willUpdateGoogleSheets)
+                {
+                    willUpdateGoogleSheets = value;
+                    OnPropertyChanged("WillUpdateGoogleSheets");
+                }
+            }
+        }
+
 
         // Public Commands
         private RelayCommand _uploadFile;
@@ -89,6 +161,7 @@ namespace SC_RoomLookup
         // Methods
         private void Search()
         {
+            // Search by the selected setting
             string input = this.Search_Input;
             switch (Selected_Setting)
             {
@@ -111,47 +184,52 @@ namespace SC_RoomLookup
                     break;
             }
             Filter();
+            PrintToFile(input);
+
+            // If the Search only yeilds one result, then get the full PIK of that input and update the google sheet
+            if (this.Results.Count.Equals(1))
+                UpdateGoogleSheets(this.GetFullPIK(input));
         }
         private void SearchByPIK(string PIK)
         {
-            this.Results.Clear();
-            foreach (Room r in this.HallData.FindAll(r => r.PIK.Contains(PIK)))
-                this.Results.Add(r);
+            // Check if the PIK exists and add it to the results
+            try
+            {
+                this.Results.Clear();
+                foreach (Room r in this.HallData.FindAll(r => r.PIK.Contains(PIK)))
+                    this.Results.Add(r);
+            }
+            catch { }
+
         }
         private void SearchByRoomNum(string RoomNum)
         {
-            this.Results.Clear();
-            foreach (Room r in this.HallData.FindAll(r => r.RoomNumber.Contains(RoomNum)))
-                this.Results.Add(r);
+            // Check if the room number exists and add it to the results (case insensitive)
+            try
+            {
+                this.Results.Clear();
+                RoomNum = RoomNum.ToLower();
+                foreach (Room r in this.HallData.FindAll(r => r.RoomNumber.ToLower().Contains(RoomNum)))
+                    this.Results.Add(r);
+            }
+            catch { }
+
         }
         private void SearchByKeyCode(string keyCode)
         {
-            this.Results.Clear();
-            foreach (Room r in this.HallData.FindAll(r => r.KeyCode.Contains(keyCode)))
-                this.Results.Add(r);
-        }
-        private void UploadFile()
-        {
-            OpenFileDialog fileBrowser = new OpenFileDialog
+            // Check if the key code exists and add it to the results (case insensitive)
+            try
             {
-                // Set filter for file extension and default file extension 
-                DefaultExt = ".csv",
-                Filter = "Comma Delimited (*.csv)|"
-            };
+                this.Results.Clear();
+                keyCode = keyCode.ToLower();
+                foreach (Room r in this.HallData.FindAll(r => r.KeyCode.ToLower().Contains(keyCode)))
+                    this.Results.Add(r);
+            } catch { }
 
-            // Display OpenFileDialog by calling ShowDialog method 
-            Nullable<bool> result = fileBrowser.ShowDialog();
-
-            // Get the selected file name and display in a TextBox 
-            if (result == true)
-            {
-                // Open document 
-                string filename = fileBrowser.FileName;
-                Console.WriteLine(filename);
-            }
         }
         private void ChangeHall(Hall newHall)
         {
+            // Update the new hall and load the data for that hall
             this.Selected_Hall = newHall;
             this.HallData = this.IndexedData[Selected_Hall.ToString()];
             this.Results.Clear();
@@ -176,12 +254,113 @@ namespace SC_RoomLookup
             foreach (Room r in temp)
                 this.Results.Add(r);
         }
+        private void UpdateGoogleSheets(string PIK)
+        {
+            try
+            {
+                // Highlight the cell in the Google sheets based off it is check-in or check-out
+                switch (this.Check_Setting)
+                {
+                    case Check_Options.Check_In:
+                        this.GoogleSheets.HighlightCell(PIK, true);
+                        break;
+                    case Check_Options.Check_Out:
+                        this.GoogleSheets.HighlightCell(PIK, false);
+                        break;
+                }
+            } catch (Exception e)
+            {
+                // Check if the internet is down since an error was thrown
+                if (!IsConnectedToInternet())
+                    MessageBox.Show("The Google Sheet cannot be updated until connected to the internet", "Connection Issue", MessageBoxButton.OK);
+                else
+                    MessageBox.Show("Unable to update the Google Sheet!\nError: " + e, "Google Sheets Error", MessageBoxButton.OK);
+            }
+            
+        }
+        private void PrintToFile(string search)
+        {
+            var path = Path.Combine(Environment.CurrentDirectory, "Logs");
+
+            // Create the Directory if it does not exist
+            if (!Directory.Exists(path))
+                Directory.CreateDirectory(path);
+
+            // Write the search to the log
+            using (StreamWriter file = new StreamWriter(Path.Combine(path, this.FileName), true))
+            {
+                file.WriteLine(String.Format("Hall: {0}, Search: {1}, Type: {2}, Filter: {3}, GoogleSheets: {4}", this.Selected_Hall.ToString(), 
+                                                                                                                 search, 
+                                                                                                                 this.Selected_Setting.ToString(), 
+                                                                                                                 this.Filtered_Setting.ToString(), 
+                                                                                                                 this.Check_Setting.ToString()));
+            }
+        }
+        private bool IsConnectedToInternet()
+        {
+            try
+            {
+                using (var client = new WebClient())
+                using (client.OpenRead("http://clients3.google.com/generate_204"))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        private bool ValidateURL(string url)
+        {
+            // Sample URL: https://docs.google.com/spreadsheets/d/1qM2QNKumoae0UbksARlBVjSmVHdbTEWG5VU1C5oB00/edit#gid=47395400
+            long tempInt;
+            try
+            {
+                if (!url.Contains("docs.google.com/spreadsheets/d/"))
+                    return false;
+                if (url.Split('/').Count() != 7)
+                    return false;
+                if (!long.TryParse(url.Split('/').Last().Replace("edit#gid=", ""), out tempInt))
+                    return false;
+            } catch { return false; }
+
+            return true;
+            
+        }
+        private string GetFullPIK(string input)
+        {
+            // Returns the first PIK match for a partial PIK
+            input = input.ToLower();
+            switch (this.Selected_Setting)
+            {
+                case SearchBy_Settings.PIK:
+                    foreach (Room r in this.HallData.FindAll(r => r.PIK.Contains(input)))
+                        return r.PIK;
+                    break;
+                case SearchBy_Settings.KeyCode:
+                    foreach (Room r in this.HallData.FindAll(r => r.KeyCode.ToLower().Contains(input)))
+                        return r.PIK;
+                    break;
+                case SearchBy_Settings.RoomNumber:
+                    foreach (Room r in this.HallData.FindAll(r => r.RoomNumber.ToLower().Contains(input)))
+                        return r.PIK;
+                    break;
+            }
+            return null;
+        }
+        private void IsUpdatingGoogleSheets()
+        {
+            this.WillUpdateGoogleSheets = !string.IsNullOrEmpty(this.SpreadSheetURL) && this.Check_Setting != Check_Options.None;
+        }
 
         // Private variables
-        private string searchInput;
+        private string searchInput, spreadsheetURL;
         private Hall selectedHall;
         private SearchBy_Settings selectedsetting;
         private FilterBy_Settings filtersetting;
+        private Check_Options checkOptions;
+        public bool willUpdateGoogleSheets;
 
         //INotifyPropertyChanged
         public event PropertyChangedEventHandler PropertyChanged;
@@ -199,29 +378,4 @@ namespace SC_RoomLookup
             return true;
         }
     }
-
-    [TypeConverter(typeof(EnumDescriptionTypeConverter))]
-    public enum SearchBy_Settings
-    {
-        [Description("PIK")]
-        PIK,
-        [Description("Room Number")]
-        RoomNumber,
-        [Description("Key Code")]
-        KeyCode
-    }
-
-    [TypeConverter(typeof(EnumDescriptionTypeConverter))]
-    public enum FilterBy_Settings
-    {
-        [Description("Conference Room")]
-        Conference,
-        [Description("Spare Room")]
-        Spare,
-        [Description("All")]
-        All
-    }
-
-    public enum Hall { A_Hall, KC_Hall, Libscomb_Hall, Vandergriff_Hall }
-
 }
